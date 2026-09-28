@@ -16,6 +16,8 @@ create table if not exists public.review_logs (
   created_at timestamptz not null default now()
 );
 
+alter table public.cards add column if not exists deck_id uuid references public.decks(id) on delete set null;
+
 alter table public.decks enable row level security;
 alter table public.review_logs enable row level security;
 

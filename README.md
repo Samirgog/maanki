@@ -1,4 +1,4 @@
-# Lingo
+# maanki
 
 Игровой PWA-тренажёр английских слов на React, TypeScript и Vite.
 
