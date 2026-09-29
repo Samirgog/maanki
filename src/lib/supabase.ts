@@ -9,10 +9,13 @@ export type CloudCard = { id: number; word: string; translation: string; example
 export type CloudDeck = { id: string; title: string; description: string; color: string }
 
 async function session() {
-  if (!supabase) return null
+  if (!supabase) throw new Error('Supabase environment is not configured')
   const current = (await supabase.auth.getSession()).data.session
   if (current) return current
-  return (await supabase.auth.signInAnonymously()).data.session
+  const result = await supabase.auth.signInAnonymously()
+  if (result.error) throw result.error
+  if (!result.data.session) throw new Error('Anonymous session was not created')
+  return result.data.session
 }
 
 export async function loadCloudData() {
@@ -35,9 +38,9 @@ export async function loadCloudData() {
 
 export async function saveCloudCards(cards: CloudCard[]) {
   const user = await session()
-  if (!user || !supabase || !cards.length) return
+  if (!cards.length || !supabase) return
   const { error } = await supabase.from('cards').upsert(cards.map(card => ({ user_id: user.user.id, client_id: card.id, word: card.word, translation: card.translation, example: card.example, level: card.level, interval: card.interval, due: card.due, tag: card.tag, phonetic: card.phonetic, deck_id: card.deckId || null })), { onConflict: 'user_id,client_id' })
-  if (error) console.warn('Supabase card sync failed:', error.message)
+  if (error) throw error
 }
 
 export async function saveCloudDeck(deck: Omit<CloudDeck, 'id'>) {
@@ -50,7 +53,7 @@ export async function saveCloudDeck(deck: Omit<CloudDeck, 'id'>) {
 
 export async function logCloudReview(cardId: number, rating: number, interval: number) {
   const user = await session()
-  if (!user || !supabase) return
+  if (!supabase) return
   const { error } = await supabase.from('review_logs').insert({ user_id: user.user.id, client_id: cardId, rating, interval })
-  if (error) console.warn('Supabase review sync failed:', error.message)
+  if (error) throw error
 }

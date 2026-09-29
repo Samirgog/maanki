@@ -36,10 +36,11 @@ function App() {
   const [todayReviews, setTodayReviews] = useState(0)
   const [activeDeck, setActiveDeck] = useState<CloudDeck | null>(null)
   const [showAddCard, setShowAddCard] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   useEffect(() => { localStorage.setItem('lingo-cards', JSON.stringify(cards)); localStorage.setItem('lingo-streak', String(streak)); localStorage.setItem('lingo-today', String(completedToday)); if (customSetName) localStorage.setItem('lingo-custom-set', customSetName) }, [cards, streak, completedToday, customSetName])
   useEffect(() => { if (!supabase) return; loadCloudData().then(data => { setCards(data.cards); setDecks(data.decks); setTodayReviews(data.reviews); setCompletedToday(data.reviews); setCloudReady(true) }).catch(error => { console.warn('Supabase load failed:', error); setCloudReady(true) }) }, [])
-  useEffect(() => { if (supabase && cloudReady) void saveCloudCards(cards) }, [cards, cloudReady])
+  useEffect(() => { if (supabase && cloudReady && cards.length) void saveCloudCards(cards).catch(() => setSaveError('Не удалось сохранить изменения. Проверь подключение и попробуй ещё раз.')) }, [cards, cloudReady])
   const dueCards = useMemo(() => cards.filter(c => c.due), [cards])
 
   const navigate = (next: View) => { setView(next); setSidebarOpen(false) }
@@ -48,7 +49,20 @@ function App() {
     setCards(prev => prev.map(c => c.id === id ? { ...c, due: false, interval: nextInterval } : c))
     setCompletedToday(v => Math.min(dailyGoal, v + 1))
     setTodayReviews(v => v + 1)
-    void logCloudReview(id, rating, nextInterval)
+    void logCloudReview(id, rating, nextInterval).catch(() => setSaveError('Не удалось сохранить результат. Проверь подключение и попробуй ещё раз.'))
+  }
+  const createDeck = async (name: string, tag: string) => {
+    try {
+      const deck = await saveCloudDeck({ title: name, description: tag || 'Мой набор', color: 'purple' })
+      if (!deck) throw new Error('Storage is not configured')
+      setDecks(prev => [...prev, deck])
+      setActiveDeck(deck)
+      setShowCreateSet(false)
+      setShowAddCard(true)
+      setSaveError('')
+    } catch {
+      setSaveError('Не удалось создать набор. Проверь подключение и настройки проекта.')
+    }
   }
 
   return <div className={isDark ? 'app dark' : 'app'}>
@@ -70,8 +84,9 @@ function App() {
       <main className="main">{view === 'home' && <HomeView today={today} completed={completedToday} goal={dailyGoal} due={dueCards.length} navigate={navigate} streak={streak} cards={cards} decks={decks} />}{view === 'learn' && <LearnView cards={dueCards} onRate={markReviewed} onExit={() => navigate('home')} />}{view === 'library' && <LibraryView cards={cards} navigate={navigate} onCreate={() => setShowCreateSet(true)} customSetName={customSetName} decks={decks} onAddCard={deck => { setActiveDeck(deck); setShowAddCard(true) }} onToggleDue={id => setCards(prev => prev.map(card => card.id === id ? { ...card, due: true } : card))} />}{view === 'stats' && <StatsView cards={cards} completed={completedToday} streak={streak} todayReviews={todayReviews} />}{view === 'settings' && <SettingsView dark={isDark} setDark={setDark} goal={dailyGoal} setGoal={setDailyGoal} supabaseReady={Boolean(supabase)} />}</main>
     </div>
     <nav className="bottom-tabs"><SideItem icon={<Home size={20} />} label="Главная" active={view === 'home'} onClick={() => navigate('home')} /><SideItem icon={<Brain size={20} />} label="Учиться" badge={dueCards.length} active={view === 'learn'} onClick={() => navigate('learn')} /><SideItem icon={<Layers3 size={20} />} label="Наборы" active={view === 'library'} onClick={() => navigate('library')} /><SideItem icon={<BarChart3 size={20} />} label="Прогресс" active={view === 'stats'} onClick={() => navigate('stats')} /></nav>
-    {showCreateSet && <CreateSetModal onClose={() => setShowCreateSet(false)} onCreate={async (name, tag) => { setShowCreateSet(false); setCustomSetName(''); const deck = await saveCloudDeck({ title: name, description: tag || 'Мой набор', color: 'purple' }); const localDeck = deck || { id: `local-${Date.now()}`, title: name, description: tag || 'Мой набор', color: 'purple' }; setDecks(prev => [...prev, localDeck]); setActiveDeck(localDeck); setShowAddCard(true) }} />}
-    {showAddCard && activeDeck && <AddCardModal deck={activeDeck} onClose={() => setShowAddCard(false)} onAdd={card => setCards(prev => [...prev, card])} />}
+    {showCreateSet && <CreateSetModal onClose={() => setShowCreateSet(false)} onCreate={createDeck} />}
+    {saveError && <button className="save-error" onClick={() => setSaveError('')}>{saveError}<X size={15} /></button>}
+    {showAddCard && activeDeck && <AddCardModal deck={activeDeck} onClose={() => setShowAddCard(false)} onAdd={async card => { try { await saveCloudCards([card]); setCards(prev => [...prev, card]); setSaveError('') } catch { setSaveError('Не удалось сохранить слово. Проверь подключение и попробуй ещё раз.') } }} />}
   </div>
 }
 
@@ -113,14 +128,15 @@ function CreateSetModal({ onClose, onCreate }: { onClose: () => void; onCreate: 
   const [tag, setTag] = useState('My set')
   return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" onMouseDown={e => e.stopPropagation()}><button className="modal-close icon-button" onClick={onClose} aria-label="Закрыть"><X size={20} /></button><div className="modal-icon"><Layers3 size={22} /></div><p className="eyebrow">Новая коллекция</p><h2>Создай свой набор</h2><p className="modal-copy">Начни с темы, которая тебе сейчас интересна.</p><label>Название набора<input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Например, English for travel" /></label><label>Категория<input value={tag} onChange={e => setTag(e.target.value)} placeholder="Travel" /></label><button className="primary-button modal-submit" disabled={!name.trim()} onClick={() => onCreate(name, tag)}>Создать набор <ArrowRight size={17} /></button></div></div>
 }
-function AddCardModal({ deck, onClose, onAdd }: { deck: CloudDeck; onClose: () => void; onAdd: (card: Card) => void }) {
+function AddCardModal({ deck, onClose, onAdd }: { deck: CloudDeck; onClose: () => void; onAdd: (card: Card) => Promise<void> }) {
   const [word, setWord] = useState('')
   const [translation, setTranslation] = useState('')
   const [example, setExample] = useState('')
   const [added, setAdded] = useState(0)
+  const [saving, setSaving] = useState(false)
   const canSave = word.trim() && translation.trim()
-  const addCard = () => { if (!canSave) return; onAdd({ id: Date.now(), word: word.trim(), translation: translation.trim(), example: example.trim() || `${word.trim()} — ${translation.trim()}`, level: 'A1', interval: 1, due: true, tag: deck.title, phonetic: '', deckId: deck.id }); setWord(''); setTranslation(''); setExample(''); setAdded(value => value + 1) }
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal card-modal" onMouseDown={e => e.stopPropagation()}><button className="modal-close icon-button" onClick={onClose} aria-label="Закрыть"><X size={20} /></button><div className="modal-icon"><BookOpen size={22} /></div><p className="eyebrow">{deck.title}</p><h2>{added ? `Добавлено слов: ${added}` : 'Добавь слова'}</h2><p className="modal-copy">Добавляй карточки одну за другой. Когда закончишь — нажми «Готово».</p><label>Слово на английском<input autoFocus value={word} onChange={e => setWord(e.target.value)} placeholder="Например, wander" /></label><label>Перевод<input value={translation} onChange={e => setTranslation(e.target.value)} placeholder="Например, бродить" /></label><label>Пример предложения <span className="optional">необязательно</span><input value={example} onChange={e => setExample(e.target.value)} placeholder="I like to wander around the city." /></label><div className="card-modal-actions"><button className="outline-button" onClick={onClose}>Готово</button><button className="primary-button modal-submit" disabled={!canSave} onClick={addCard}>Добавить слово <Plus size={17} /></button></div></div></div>
+  const addCard = async () => { if (!canSave || saving) return; setSaving(true); try { await onAdd({ id: Date.now(), word: word.trim(), translation: translation.trim(), example: example.trim() || `${word.trim()} — ${translation.trim()}`, level: 'A1', interval: 1, due: true, tag: deck.title, phonetic: '', deckId: deck.id }); setWord(''); setTranslation(''); setExample(''); setAdded(value => value + 1) } finally { setSaving(false) } }
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal card-modal" onMouseDown={e => e.stopPropagation()}><button className="modal-close icon-button" onClick={onClose} aria-label="Закрыть"><X size={20} /></button><div className="modal-icon"><BookOpen size={22} /></div><p className="eyebrow">{deck.title}</p><h2>{added ? `Добавлено слов: ${added}` : 'Добавь слова'}</h2><p className="modal-copy">Добавляй карточки одну за другой. Когда закончишь — нажми «Готово».</p><label>Слово на английском<input autoFocus value={word} onChange={e => setWord(e.target.value)} placeholder="Например, wander" /></label><label>Перевод<input value={translation} onChange={e => setTranslation(e.target.value)} placeholder="Например, бродить" /></label><label>Пример предложения <span className="optional">необязательно</span><input value={example} onChange={e => setExample(e.target.value)} placeholder="I like to wander around the city." /></label><div className="card-modal-actions"><button className="outline-button" onClick={onClose}>Готово</button><button className="primary-button modal-submit" disabled={!canSave || saving} onClick={addCard}>{saving ? 'Сохраняю…' : 'Добавить слово'} <Plus size={17} /></button></div></div></div>
 }
 function BriefcaseIcon() { return <Layers3 size={28} /> }
 function StatsView({ cards, completed, streak, todayReviews }: { cards: Card[]; completed: number; streak: number; todayReviews: number }) {
